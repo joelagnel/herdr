@@ -82,13 +82,14 @@ impl App {
         let Some(expected_agent) = terminal.effective_known_agent() else {
             return agent_not_ready(id, &params.target);
         };
+        let via_ssh = terminal.agent_via_ssh;
         if terminal.managed_agent_launch_pending() {
             return agent_not_ready(id, &params.target);
         }
         let Some(runtime) = self.lookup_runtime_sender(resolved.ws_idx, resolved.pane_id) else {
             return agent_not_found(id, &params.target);
         };
-        if !super::super::agents::runtime_hosts_agent(runtime, expected_agent) {
+        if !via_ssh && !super::super::agents::runtime_hosts_agent(runtime, expected_agent) {
             return encode_error(
                 id,
                 "agent_not_ready",
@@ -239,18 +240,19 @@ impl App {
         else {
             return agent_not_found(id, &params.target);
         };
-        let Some(expected_agent) = self
-            .state
-            .terminals
-            .get(terminal_id)
-            .and_then(|terminal| terminal.effective_known_agent())
+        let Some((expected_agent, via_ssh)) =
+            self.state.terminals.get(terminal_id).and_then(|terminal| {
+                terminal
+                    .effective_known_agent()
+                    .map(|agent| (agent, terminal.agent_via_ssh))
+            })
         else {
             return agent_not_ready(id, &params.target);
         };
         let Some(runtime) = self.lookup_runtime_sender(resolved.ws_idx, resolved.pane_id) else {
             return agent_not_found(id, &params.target);
         };
-        if !super::super::agents::runtime_hosts_agent(runtime, expected_agent) {
+        if !via_ssh && !super::super::agents::runtime_hosts_agent(runtime, expected_agent) {
             return agent_not_ready(id, &params.target);
         }
         let encoded = match super::super::api_helpers::encode_api_keys(runtime, &params.keys) {

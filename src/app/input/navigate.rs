@@ -384,7 +384,7 @@ impl App {
             }
             NavigateAction::EnterResizeMode => self.state.mode = Mode::Resize,
             NavigateAction::ToggleSidebar => {
-                self.state.sidebar_collapsed = !self.state.sidebar_collapsed;
+                toggle_sidebar_for_layout(&mut self.state);
                 leave_navigate_mode(&mut self.state);
             }
             NavigateAction::CyclePaneNext => {
@@ -1742,7 +1742,7 @@ pub(super) fn execute_navigate_action_in_context(
         }
         NavigateAction::EnterResizeMode => state.mode = Mode::Resize,
         NavigateAction::ToggleSidebar => {
-            state.sidebar_collapsed = !state.sidebar_collapsed;
+            toggle_sidebar_for_layout(state);
             leave_navigate_mode(state);
         }
         NavigateAction::CyclePaneNext => {
@@ -1777,6 +1777,12 @@ pub(super) fn execute_navigate_action_in_context(
     }
 
     finish_action_context(state, context, previous_mode);
+}
+
+fn toggle_sidebar_for_layout(state: &mut AppState) {
+    if state.view.layout == crate::app::state::ViewLayout::Desktop {
+        state.sidebar_collapsed = !state.sidebar_collapsed;
+    }
 }
 
 fn workspace_action_target(state: &AppState, context: ActionContext) -> Option<usize> {
@@ -2278,6 +2284,42 @@ mod tests {
 
         assert!(state.sidebar_collapsed);
         assert_eq!(state.mode, Mode::Terminal);
+    }
+
+    #[test]
+    fn mobile_sidebar_toggle_key_does_not_change_hidden_desktop_state() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.keybinds.toggle_sidebar = crate::config::ActionKeybinds::prefix("g");
+        crate::ui::compute_view(&mut state, ratatui::layout::Rect::new(0, 0, 44, 20));
+        assert_eq!(state.view.layout, crate::app::state::ViewLayout::Mobile);
+        assert!(!state.sidebar_collapsed);
+
+        handle_navigate_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::empty()),
+        );
+
+        assert!(!state.sidebar_collapsed);
+        assert_eq!(state.mode, Mode::Terminal);
+    }
+
+    #[tokio::test]
+    async fn mobile_prefix_sidebar_toggle_does_not_change_hidden_desktop_state() {
+        let mut app = app_with_test_workspaces(&["test"]);
+        app.state.mode = Mode::Terminal;
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 44, 20));
+        assert_eq!(app.state.view.layout, crate::app::state::ViewLayout::Mobile);
+
+        app.handle_key(TerminalKey::new(
+            app.state.prefix_code,
+            app.state.prefix_mods,
+        ))
+        .await;
+        app.handle_key(TerminalKey::new(KeyCode::Char('b'), KeyModifiers::empty()))
+            .await;
+
+        assert!(!app.state.sidebar_collapsed);
+        assert_eq!(app.state.mode, Mode::Terminal);
     }
 
     #[test]

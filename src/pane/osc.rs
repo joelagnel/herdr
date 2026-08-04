@@ -461,15 +461,17 @@ pub(super) struct AgentOscStateTracker {
     latest_title: Option<String>,
     terminal_title: Option<String>,
     latest_progress: Option<String>,
+    shell_prompt_seq: u64,
 }
 
 impl AgentOscStateTracker {
     pub(super) fn observe(&mut self, bytes: &[u8]) {
-        let (collector, latest_title, terminal_title, latest_progress) = (
+        let (collector, latest_title, terminal_title, latest_progress, shell_prompt_seq) = (
             &mut self.collector,
             &mut self.latest_title,
             &mut self.terminal_title,
             &mut self.latest_progress,
+            &mut self.shell_prompt_seq,
         );
         collector.observe(bytes, |body| {
             let Some((command, payload)) = parse_agent_osc_body(body) else {
@@ -484,6 +486,9 @@ impl AgentOscStateTracker {
                 b"9" => {
                     *latest_progress =
                         Some(sanitize_agent_osc_string(payload, AGENT_OSC_MAX_CHARS));
+                }
+                b"133" if payload.first() == Some(&b'A') => {
+                    *shell_prompt_seq = shell_prompt_seq.wrapping_add(1);
                 }
                 _ => {}
             }
@@ -510,6 +515,10 @@ impl AgentOscStateTracker {
     #[allow(dead_code)] // used by terminal.rs; full call chain wired in Stage C
     pub(super) fn latest_progress(&self) -> &str {
         self.latest_progress.as_deref().unwrap_or("")
+    }
+
+    pub(super) fn shell_prompt_seq(&self) -> u64 {
+        self.shell_prompt_seq
     }
 
     /// Drops the retained title and progress so a new foreground agent cannot
@@ -977,6 +986,15 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // AgentOscStateTracker tests
+
+    #[test]
+    fn agent_osc_tracker_counts_shell_prompt_markers() {
+        let mut tracker = AgentOscStateTracker::default();
+        tracker.observe(b"\x1b]133;A\x07");
+        tracker.observe(b"\x1b]133;B\x07");
+        tracker.observe(b"\x1b]133;A;cl=m\x1b\\");
+        assert_eq!(tracker.shell_prompt_seq(), 2);
+    }
     // -----------------------------------------------------------------------
 
     #[test]

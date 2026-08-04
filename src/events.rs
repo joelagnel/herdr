@@ -66,6 +66,12 @@ pub enum AppEvent {
         process_exited: bool,
         observed_at: Instant,
     },
+    /// A screen-identified agent running behind the pane's foreground SSH client.
+    SshAgentDetected {
+        pane_id: PaneId,
+        agent: Agent,
+        observed_at: Instant,
+    },
     /// Hook-authoritative agent state was reported for a pane.
     HookStateReported {
         pane_id: PaneId,

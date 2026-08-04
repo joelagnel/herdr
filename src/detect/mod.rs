@@ -276,6 +276,18 @@ pub fn detect_agent_with_osc(
     )
 }
 
+pub fn identify_remote_agent_with_osc(
+    screen_content: &str,
+    osc_title: &str,
+    osc_progress: &str,
+) -> Option<Agent> {
+    manifest::identify_with_osc(manifest::DetectionInput {
+        screen: screen_content,
+        osc_title,
+        osc_progress,
+    })
+}
+
 pub fn should_skip_state_update(agent: Option<Agent>, screen_content: &str) -> bool {
     agent.is_some_and(|agent| manifest::should_skip_state_update(agent, screen_content))
 }

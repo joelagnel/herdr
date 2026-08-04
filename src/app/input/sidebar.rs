@@ -1402,10 +1402,12 @@ mod tests {
         ws.test_add_tab(Some("review"));
         ws.test_add_tab(Some("ops"));
         ws.test_add_tab(Some("notes"));
+        ws.test_add_tab(Some("deploy"));
+        ws.test_add_tab(Some("metrics"));
         app.state.workspaces = vec![ws];
         app.state.active = Some(0);
         app.state.selected = 0;
-        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 65, 20));
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 80, 20));
 
         let right = app.state.view.tab_scroll_right_hit_area;
         assert!(right.width > 0);
@@ -1441,7 +1443,7 @@ mod tests {
         app.state.selected = 0;
         app.state.tab_scroll = usize::MAX;
         app.state.tab_scroll_follow_active = false;
-        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 65, 20));
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 80, 20));
 
         let last_idx = app.state.workspaces[0].tabs.len() - 1;
         let target = app.state.view.tab_hit_areas[last_idx];

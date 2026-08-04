@@ -31,6 +31,12 @@ If you want to end the session and stop its panes, stop the server:
 herdr server stop
 ```
 
+### Run a remote agent from a local pane
+
+You can also keep Herdr local, run `ssh` inside one of its panes, and start Claude Code or Codex in that remote shell. Herdr recognizes the remote harness from its live terminal chrome, tracks its state, and marks its agent label with `(ssh)`.
+
+This is different from `herdr --remote`: the Herdr server and pane stay local, while only the shell and agent behind `ssh` are remote. Detection is intentionally conservative and currently covers Claude Code and Codex.
+
 ## Remote work through normal SSH
 
 SSH to the machine that has the code and credentials, then run Herdr there:

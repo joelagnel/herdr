@@ -201,6 +201,24 @@ async fn publish_state_changed_event(
     }
 }
 
+async fn publish_ssh_agent_detected_event(
+    state_events: mpsc::Sender<AppEvent>,
+    pane_id: PaneId,
+    agent: Agent,
+    observed_at: std::time::Instant,
+) {
+    if let Err(e) = state_events
+        .send(AppEvent::SshAgentDetected {
+            pane_id,
+            agent,
+            observed_at,
+        })
+        .await
+    {
+        warn!(pane = pane_id.raw(), err = %e, "failed to deliver SSH agent detection");
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct AgentDetectionPublishUpdate {
     state: AgentState,
@@ -366,6 +384,22 @@ fn apply_foreground_shell_agent_action(
     }
 }
 
+fn retain_remote_agent_during_ssh_probe(
+    previous_agent: Option<Agent>,
+    probed_agent: Option<Agent>,
+    foreground_is_ssh: bool,
+    ssh_agent_active: bool,
+    remote_exit_pending: bool,
+) -> Option<Agent> {
+    // Local process inspection stops at the SSH transport, so a missing local
+    // harness process is not evidence that the screen-identified remote agent exited.
+    if foreground_is_ssh && ssh_agent_active && !remote_exit_pending && probed_agent.is_none() {
+        previous_agent
+    } else {
+        probed_agent
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ProcessProbeInput {
     current_agent: Option<Agent>,
@@ -490,8 +524,24 @@ fn sync_content_change_acquisition(
 struct ProcessProbeResult {
     process_group_id: Option<u32>,
     foreground_is_pane_shell: bool,
+    foreground_is_ssh: bool,
     agent: Option<Agent>,
     process_name: Option<String>,
+}
+
+fn foreground_job_is_ssh(job: &crate::platform::ForegroundJob) -> bool {
+    job.processes
+        .iter()
+        .find(|process| process.pid == job.process_group_id)
+        .is_some_and(|process| {
+            let executable = process.argv0.as_deref().unwrap_or(&process.name);
+            std::path::Path::new(executable)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.eq_ignore_ascii_case("ssh") || name.eq_ignore_ascii_case("ssh.exe")
+                })
+        })
 }
 
 fn agent_hint_for_foreground_job_members(
@@ -535,6 +585,7 @@ fn process_probe_result(
     ProcessProbeResult {
         process_group_id: Some(job.process_group_id),
         foreground_is_pane_shell: job.processes.iter().any(|process| process.pid == pid),
+        foreground_is_ssh: foreground_job_is_ssh(job),
         agent: Some(agent),
         process_name: Some(process_name),
     }
@@ -561,6 +612,7 @@ fn probe_foreground_process_from_jobs(
     foreground_job: impl FnOnce() -> Option<crate::platform::ForegroundJob>,
     read_hint: impl Fn(u32) -> Option<Agent> + Copy,
 ) -> ProcessProbeResult {
+    let leader_is_ssh = leader_job.as_ref().is_some_and(foreground_job_is_ssh);
     if let Some(job) = leader_job.as_ref() {
         if let Some(hinted) = hinted_process_probe_result(job, pid, read_hint) {
             return hinted;
@@ -596,6 +648,7 @@ fn probe_foreground_process_from_jobs(
         return ProcessProbeResult {
             process_group_id: Some(job.process_group_id),
             foreground_is_pane_shell: job.processes.iter().any(|process| process.pid == pid),
+            foreground_is_ssh: foreground_job_is_ssh(job),
             agent: identified.as_ref().map(|(agent, _)| *agent),
             process_name: identified.map(|(_, process_name)| process_name),
         };
@@ -604,6 +657,7 @@ fn probe_foreground_process_from_jobs(
     ProcessProbeResult {
         process_group_id: foreground_pgid,
         foreground_is_pane_shell: false,
+        foreground_is_ssh: leader_is_ssh,
         agent: None,
         process_name: None,
     }
@@ -647,6 +701,8 @@ fn spawn_basic_detection_task(
         let mut last_process_check = std::time::Instant::now();
         let mut last_foreground_pgid = None;
         let mut has_process_probe = false;
+        let mut foreground_is_ssh = false;
+        let mut ssh_agent_prompt_seq = None;
         let mut acquisition_started_at = None;
         let mut last_content_change_at = None;
         let mut pending_foreground_shell_clear = false;
@@ -675,6 +731,8 @@ fn spawn_basic_detection_task(
                     last_process_check = std::time::Instant::now();
                     last_foreground_pgid = None;
                     has_process_probe = false;
+                    foreground_is_ssh = false;
+                    ssh_agent_prompt_seq = None;
                     acquisition_started_at = None;
                     last_content_change_at = None;
                     pending_foreground_shell_clear = false;
@@ -729,11 +787,19 @@ fn spawn_basic_detection_task(
                 let had_process_probe = has_process_probe;
                 has_process_probe = true;
                 let probe = probe_foreground_process(pid, foreground_pgid);
+                foreground_is_ssh = probe.foreground_is_ssh;
                 let process_group_id = probe.process_group_id;
                 let tracked_process_group_id =
                     process_group_for_change_tracking(foreground_pgid, process_group_id);
                 let foreground_is_pane_shell = probe.foreground_is_pane_shell;
-                let mut new_agent = probe.agent;
+                let previous_agent = agent_presence.current_agent();
+                let mut new_agent = retain_remote_agent_during_ssh_probe(
+                    previous_agent,
+                    probe.agent,
+                    foreground_is_ssh,
+                    ssh_agent_prompt_seq.is_some(),
+                    pending_foreground_shell_clear || foreground_shell_exit_reported,
+                );
                 if let Some(suppressed_agent) = suppressed_agent {
                     if new_agent == Some(suppressed_agent) {
                         new_agent = None;
@@ -741,7 +807,6 @@ fn spawn_basic_detection_task(
                         *pending_release = None;
                     }
                 }
-                let previous_agent = agent_presence.current_agent();
                 let foreground_action = foreground_shell_agent_action(
                     previous_agent,
                     new_agent,
@@ -768,6 +833,9 @@ fn spawn_basic_detection_task(
                 }
                 if changed {
                     agent = agent_presence.current_agent();
+                    if agent.is_none() {
+                        ssh_agent_prompt_seq = None;
+                    }
                     agent_changed = previous_agent != agent
                         || foreground_action
                             == ForegroundShellAgentAction::ReportReplacementProcess;
@@ -800,6 +868,13 @@ fn spawn_basic_detection_task(
                         }
                     }
                 }
+            }
+
+            if foreground_is_ssh
+                && agent.is_some()
+                && ssh_agent_prompt_seq.is_some_and(|seq| terminal.shell_prompt_seq() > seq)
+            {
+                pending_foreground_shell_clear = true;
             }
 
             let process_exited = pending_foreground_shell_clear
@@ -865,6 +940,28 @@ fn spawn_basic_detection_task(
 
             let osc_title = terminal.agent_osc_title();
             let osc_progress = terminal.agent_osc_progress();
+            if agent.is_none() && foreground_is_ssh {
+                if let Some(remote_agent) = crate::detect::identify_remote_agent_with_osc(
+                    &content,
+                    &osc_title,
+                    &osc_progress,
+                ) {
+                    agent_presence = AgentDetectionPresence::from_agent(Some(remote_agent));
+                    agent = Some(remote_agent);
+                    ssh_agent_prompt_seq = Some(terminal.shell_prompt_seq());
+                    agent_changed = true;
+                    state = AgentState::Idle;
+                    last_visible_idle = true;
+                    last_screen_scan_detection_content_seq = None;
+                    publish_ssh_agent_detected_event(
+                        state_events.clone(),
+                        pane_id,
+                        remote_agent,
+                        now,
+                    )
+                    .await;
+                }
+            }
             let Some(screen_detection) = detection_update_for_publish_with_osc(
                 agent,
                 &content,
@@ -2103,6 +2200,8 @@ impl PaneRuntime {
                 let mut last_process_check = Instant::now();
                 let mut last_foreground_pgid = None;
                 let mut has_process_probe = false;
+                let mut foreground_is_ssh = false;
+                let mut ssh_agent_prompt_seq = None;
                 let mut acquisition_started_at = None;
                 let mut last_content_change_at = None;
                 let mut pending_foreground_shell_clear = false;
@@ -2141,6 +2240,8 @@ impl PaneRuntime {
                             last_visible_idle = false;
                             last_foreground_pgid = None;
                             has_process_probe = false;
+                            foreground_is_ssh = false;
+                            ssh_agent_prompt_seq = None;
                             acquisition_started_at = None;
                             last_content_change_at = None;
                             pending_foreground_shell_clear = false;
@@ -2200,6 +2301,7 @@ impl PaneRuntime {
                         has_process_probe = true;
                         if pid > 0 {
                             let probe = probe_foreground_process(pid, foreground_pgid);
+                            foreground_is_ssh = probe.foreground_is_ssh;
                             let process_name = probe.process_name;
                             let process_group_id = probe.process_group_id;
                             let tracked_process_group_id = process_group_for_change_tracking(
@@ -2207,7 +2309,14 @@ impl PaneRuntime {
                                 process_group_id,
                             );
                             let foreground_is_pane_shell = probe.foreground_is_pane_shell;
-                            let mut new_agent = probe.agent;
+                            let previous_agent = agent_presence.current_agent();
+                            let mut new_agent = retain_remote_agent_during_ssh_probe(
+                                previous_agent,
+                                probe.agent,
+                                foreground_is_ssh,
+                                ssh_agent_prompt_seq.is_some(),
+                                pending_foreground_shell_clear || foreground_shell_exit_reported,
+                            );
 
                             if let Some(suppressed_agent) = suppressed_agent {
                                 if new_agent == Some(suppressed_agent) {
@@ -2219,7 +2328,6 @@ impl PaneRuntime {
                                 }
                             }
 
-                            let previous_agent = agent_presence.current_agent();
                             let foreground_action = foreground_shell_agent_action(
                                 previous_agent,
                                 new_agent,
@@ -2247,6 +2355,9 @@ impl PaneRuntime {
                             pending_restore_probe = false;
                             if changed {
                                 agent = agent_presence.current_agent();
+                                if agent.is_none() {
+                                    ssh_agent_prompt_seq = None;
+                                }
                                 if agent != previous_agent
                                     || foreground_action
                                         == ForegroundShellAgentAction::ReportReplacementProcess
@@ -2300,6 +2411,13 @@ impl PaneRuntime {
                                 agent_changed = true;
                             }
                         }
+                    }
+
+                    if foreground_is_ssh
+                        && agent.is_some()
+                        && ssh_agent_prompt_seq.is_some_and(|seq| terminal.shell_prompt_seq() > seq)
+                    {
+                        pending_foreground_shell_clear = true;
                     }
 
                     let pid = child_pid.load(Ordering::Acquire);
@@ -2374,6 +2492,28 @@ impl PaneRuntime {
 
                     let osc_title = terminal.agent_osc_title();
                     let osc_progress = terminal.agent_osc_progress();
+                    if agent.is_none() && foreground_is_ssh {
+                        if let Some(remote_agent) = detect::identify_remote_agent_with_osc(
+                            &content,
+                            &osc_title,
+                            &osc_progress,
+                        ) {
+                            agent_presence = AgentDetectionPresence::from_agent(Some(remote_agent));
+                            agent = Some(remote_agent);
+                            ssh_agent_prompt_seq = Some(terminal.shell_prompt_seq());
+                            agent_changed = true;
+                            state = AgentState::Idle;
+                            last_visible_idle = true;
+                            last_screen_scan_detection_content_seq = None;
+                            publish_ssh_agent_detected_event(
+                                state_events.clone(),
+                                pane_id,
+                                remote_agent,
+                                now,
+                            )
+                            .await;
+                        }
+                    }
                     let Some(screen_detection) = detection_update_for_publish_with_osc(
                         agent,
                         &content,
@@ -3598,6 +3738,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ssh_transport_probe_preserves_remote_agent_until_exit_signal() {
+        let mut presence = AgentDetectionPresence::from_agent(Some(Agent::Claude));
+        let mut pending_clear = false;
+        let mut exit_reported = false;
+
+        for _ in 0..=AGENT_MISS_CONFIRMATION_ATTEMPTS {
+            let previous_agent = presence.current_agent();
+            let probed_agent =
+                retain_remote_agent_during_ssh_probe(previous_agent, None, true, true, false);
+            let action =
+                foreground_shell_agent_action(previous_agent, probed_agent, false, exit_reported);
+            apply_foreground_shell_agent_action(
+                &mut presence,
+                action,
+                previous_agent,
+                probed_agent,
+                &mut pending_clear,
+                &mut exit_reported,
+            );
+        }
+
+        assert_eq!(presence.current_agent(), Some(Agent::Claude));
+
+        let previous_agent = presence.current_agent();
+
+        assert_eq!(
+            retain_remote_agent_during_ssh_probe(previous_agent, None, true, true, true),
+            None
+        );
+        assert_eq!(
+            retain_remote_agent_during_ssh_probe(previous_agent, None, false, true, false),
+            None
+        );
+        assert_eq!(
+            retain_remote_agent_during_ssh_probe(previous_agent, None, true, false, false),
+            None
+        );
+    }
+
     fn foreground_process(pid: u32, name: &str) -> crate::platform::ForegroundProcess {
         crate::platform::ForegroundProcess {
             pid,
@@ -3721,6 +3901,29 @@ mod tests {
 
         assert_eq!(result.agent, Some(Agent::Claude));
         assert_eq!(result.process_name.as_deref(), Some("claude"));
+    }
+
+    #[test]
+    fn foreground_ssh_transport_requires_exact_process_basename() {
+        for (name, expected) in [("ssh", true), ("/usr/bin/ssh", true), ("ssh.exe", true)] {
+            let job = crate::platform::ForegroundJob {
+                process_group_id: 99,
+                processes: vec![foreground_process(99, name)],
+            };
+            let result =
+                probe_foreground_process_from_jobs(42, Some(99), Some(job), || None, |_| None);
+            assert_eq!(result.foreground_is_ssh, expected, "{name}");
+        }
+
+        for name in ["ssh-agent", "my-ssh", "bash"] {
+            let job = crate::platform::ForegroundJob {
+                process_group_id: 99,
+                processes: vec![foreground_process(99, name)],
+            };
+            let result =
+                probe_foreground_process_from_jobs(42, Some(99), Some(job), || None, |_| None);
+            assert!(!result.foreground_is_ssh, "{name}");
+        }
     }
 
     fn process_probe_input() -> ProcessProbeInput {

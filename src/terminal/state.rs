@@ -120,6 +120,9 @@ pub struct TerminalState {
     pub id: TerminalId,
     pub cwd: PathBuf,
     pub detected_agent: Option<Agent>,
+    /// The detected agent is running behind this terminal's foreground SSH client.
+    /// This is transient runtime provenance and is intentionally not persisted.
+    pub agent_via_ssh: bool,
     pub fallback_state: AgentState,
     fallback_visible_blocker: bool,
     fallback_observed_at: Option<Instant>,
@@ -153,6 +156,7 @@ impl TerminalState {
             id,
             cwd,
             detected_agent: None,
+            agent_via_ssh: false,
             fallback_state: AgentState::Unknown,
             fallback_visible_blocker: false,
             fallback_observed_at: None,
@@ -344,6 +348,9 @@ impl TerminalState {
             };
         }
         self.detected_agent = agent;
+        if agent.is_none() {
+            self.agent_via_ssh = false;
+        }
         if let Some(agent) = agent {
             let agent_label = crate::detect::agent_label(agent);
             self.reconcile_agent_name_owner(agent_label, None);
@@ -2066,6 +2073,17 @@ mod tests {
             .join(name)
             .display()
             .to_string()
+    }
+
+    #[test]
+    fn clearing_detected_agent_clears_ssh_provenance() {
+        let mut terminal = test_terminal();
+        terminal.agent_via_ssh = true;
+        terminal.set_detected_state(Some(Agent::Codex), AgentState::Idle);
+        assert!(terminal.agent_via_ssh);
+
+        terminal.set_detected_state(None, AgentState::Unknown);
+        assert!(!terminal.agent_via_ssh);
     }
 
     fn anchor_full_lifecycle_session(

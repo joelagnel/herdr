@@ -124,6 +124,7 @@ pub struct RuleEvidence {
 struct LoadedManifest {
     manifest: AgentManifest,
     compiled_rules: Vec<CompiledRule>,
+    compiled_identity_rules: Vec<CompiledRule>,
     source: ManifestSource,
     warning: Option<String>,
     cached_remote_version: Option<String>,
@@ -145,6 +146,8 @@ pub(crate) struct AgentManifest {
     _updated_at: Option<String>,
     #[serde(default)]
     aliases: Vec<String>,
+    #[serde(default)]
+    identity_rules: Vec<ManifestRule>,
     #[serde(default)]
     rules: Vec<ManifestRule>,
 }
@@ -336,6 +339,36 @@ pub fn detect_with_osc(agent: Agent, input: DetectionInput<'_>) -> AgentDetectio
         return fallback_explain(Some(agent), None, false).into_detection();
     };
     evaluate_loaded_manifest(agent, input, loaded, false).into_detection()
+}
+
+/// Identify a remote agent from deliberately strong, manifest-owned screen
+/// evidence. Callers must gate this behind a verified foreground SSH process.
+pub fn identify_with_osc(input: DetectionInput<'_>) -> Option<Agent> {
+    let lock = manifest_cache();
+    let guard = match lock.read() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut matched = None;
+    for (agent, loaded) in &guard.manifests {
+        let Some(loaded) = loaded else {
+            continue;
+        };
+        let identity_matches = loaded
+            .manifest
+            .identity_rules
+            .iter()
+            .zip(&loaded.compiled_identity_rules)
+            .any(|(rule, compiled)| compiled_rule_matches(compiled, region(input, &rule.region)));
+        if !identity_matches {
+            continue;
+        }
+        if matched.is_some() {
+            return None;
+        }
+        matched = Some(*agent);
+    }
+    matched
 }
 
 pub fn explain(agent: Agent, screen_content: &str) -> DetectionExplain {
@@ -671,9 +704,11 @@ fn loaded_manifest(
     local_override_shadowing_remote: bool,
 ) -> Result<LoadedManifest, String> {
     let compiled_rules = compile_manifest(&manifest)?;
+    let compiled_identity_rules = compile_rules(&manifest.identity_rules)?;
     Ok(LoadedManifest {
         manifest,
         compiled_rules,
+        compiled_identity_rules,
         source,
         warning,
         cached_remote_version,
@@ -894,15 +929,16 @@ fn validate_manifest(manifest: &AgentManifest) -> Result<(), String> {
     if manifest.rules.is_empty() {
         return Err("manifest must contain at least one rule".to_string());
     }
-    if manifest.rules.len() > MAX_RULES_PER_MANIFEST {
+    let rule_count = manifest.rules.len() + manifest.identity_rules.len();
+    if rule_count > MAX_RULES_PER_MANIFEST {
         return Err(format!(
             "manifest contains {} rules, max is {MAX_RULES_PER_MANIFEST}",
-            manifest.rules.len()
+            rule_count
         ));
     }
 
     let mut complexity = ManifestComplexity::default();
-    for rule in &manifest.rules {
+    for rule in manifest.identity_rules.iter().chain(&manifest.rules) {
         if rule.id.trim().is_empty() {
             return Err("manifest rule id must not be empty".to_string());
         }
@@ -1129,8 +1165,11 @@ fn manifest_gate_from_rule(rule: &ManifestRule) -> ManifestGate {
 }
 
 fn compile_manifest(manifest: &AgentManifest) -> Result<Vec<CompiledRule>, String> {
-    manifest
-        .rules
+    compile_rules(&manifest.rules)
+}
+
+fn compile_rules(rules: &[ManifestRule]) -> Result<Vec<CompiledRule>, String> {
+    rules
         .iter()
         .map(|rule| {
             compile_gate(&manifest_gate_from_rule(rule))

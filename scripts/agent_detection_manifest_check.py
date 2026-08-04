@@ -16,7 +16,15 @@ DEFAULT_BUNDLED_DIR = PROJECT_ROOT / "src" / "detect" / "manifests"
 DEFAULT_WEBSITE_DIR = PROJECT_ROOT / "website" / "agent-detection"
 ENGINE_SOURCE = PROJECT_ROOT / "src" / "detect" / "manifest_update.rs"
 
-MANIFEST_KEYS = {"id", "version", "min_engine_version", "updated_at", "aliases", "rules"}
+MANIFEST_KEYS = {
+    "id",
+    "version",
+    "min_engine_version",
+    "updated_at",
+    "aliases",
+    "identity_rules",
+    "rules",
+}
 RULE_KEYS = {
     "id",
     "state",
@@ -146,10 +154,13 @@ def validate_manifest(path: Path, engine_version: int) -> dict:
     rules = manifest.get("rules")
     if not isinstance(rules, list) or not rules:
         raise CheckError(f"{path}: rules must be a non-empty array")
-    if len(rules) > MAX_RULES_PER_MANIFEST:
+    identity_rules = manifest.get("identity_rules", [])
+    if not isinstance(identity_rules, list):
+        raise CheckError(f"{path}: identity_rules must be an array")
+    if len(rules) + len(identity_rules) > MAX_RULES_PER_MANIFEST:
         raise CheckError(f"{path}: manifest exceeds max rule count {MAX_RULES_PER_MANIFEST}")
     complexity = {"gates": 0, "matchers": 0}
-    for index, rule in enumerate(rules):
+    for index, rule in enumerate([*identity_rules, *rules]):
         validate_rule(path, index, rule, complexity)
         region = rule.get("region", "whole_recent")
         if region.startswith("top_non_empty_lines(") and min_engine < 3:
@@ -327,7 +338,7 @@ def validate_catalog(
         stages_new_engine_manifest = (
             staged_manifest
             == (bundled_manifest["version"], manifest["version"], website_digest)
-            and bundled_manifest["min_engine_version"] == engine_version
+            and bundled_manifest["min_engine_version"] <= engine_version
             and manifest["min_engine_version"] < bundled_manifest["min_engine_version"]
         )
         if cmp < 0 and not stages_new_engine_manifest:

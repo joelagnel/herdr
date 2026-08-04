@@ -494,6 +494,10 @@ impl PaneTerminal {
         self.ghostty.agent_osc_progress()
     }
 
+    pub fn shell_prompt_seq(&self) -> u64 {
+        self.ghostty.shell_prompt_seq()
+    }
+
     /// Clears retained OSC title/progress evidence on foreground agent change.
     pub fn clear_agent_osc_state(&self) {
         self.ghostty.clear_agent_osc_state()
@@ -1094,6 +1098,13 @@ impl GhosttyPaneTerminal {
         self.core
             .lock()
             .map(|core| core.agent_osc_state.latest_progress().to_owned())
+            .unwrap_or_default()
+    }
+
+    pub fn shell_prompt_seq(&self) -> u64 {
+        self.core
+            .lock()
+            .map(|core| core.agent_osc_state.shell_prompt_seq())
             .unwrap_or_default()
     }
 

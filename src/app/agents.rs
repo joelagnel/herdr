@@ -373,6 +373,7 @@ impl App {
             terminal_id: pane.terminal_id,
             name: terminal.agent_name.clone(),
             agent: pane.agent,
+            via_ssh: terminal.agent_via_ssh,
             title: pane.title,
             terminal_title: pane.terminal_title,
             terminal_title_stripped: pane.terminal_title_stripped,

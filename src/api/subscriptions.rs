@@ -663,6 +663,7 @@ mod tests {
             foreground_cwd: None,
             label: None,
             agent: None,
+            via_ssh: false,
             title: None,
             terminal_title: None,
             terminal_title_stripped: None,

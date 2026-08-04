@@ -1,7 +1,14 @@
 id = "codex"
-version = "2026.07.18.1"
-min_engine_version = 2
-updated_at = "2026-07-18T00:00:00Z"
+version = "2026.08.02.1"
+min_engine_version = 4
+updated_at = "2026-08-02T00:00:00Z"
+
+[[identity_rules]]
+id = "ssh_startup_chrome"
+priority = 1000
+region = "whole_recent"
+contains = ["OpenAI Codex (v"]
+line_regex = ['^\s*[A-Za-z0-9][A-Za-z0-9._-]*\s+(?:default|low|medium|high|max|xhigh|ultra)\s+·']
 
 [[rules]]
 id = "osc_title_blocked"

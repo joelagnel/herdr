@@ -1,8 +1,14 @@
 id = "claude"
-version = "2026.07.13.1"
-min_engine_version = 2
-updated_at = "2026-07-13T00:00:00Z"
+version = "2026.08.02.1"
+min_engine_version = 4
+updated_at = "2026-08-02T00:00:00Z"
 aliases = ["claude-code"]
+
+[[identity_rules]]
+id = "ssh_startup_chrome"
+priority = 1000
+region = "osc_title"
+contains = ["Claude Code"]
 
 [[rules]]
 id = "osc_title_working"

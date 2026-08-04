@@ -20,6 +20,7 @@ use crate::layout::PaneId;
 use crate::terminal::TerminalRuntimeRegistry;
 
 const SWITCH_BUTTON_WIDTH: u16 = 10;
+const MIN_DESKTOP_TERMINAL_WIDTH: u16 = 48;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct MobileHeaderHitAreas {
@@ -50,12 +51,24 @@ pub(crate) fn is_mobile_width(area: Rect, threshold: u16) -> bool {
     area.width > 0 && area.width <= threshold
 }
 
+pub(crate) fn should_use_mobile_layout(area: Rect, threshold: u16, sidebar_width: u16) -> bool {
+    is_mobile_width(area, threshold)
+        || (area.width > 0
+            && sidebar_width > 0
+            && area.width.saturating_sub(sidebar_width) < MIN_DESKTOP_TERMINAL_WIDTH)
+}
+
 pub(crate) fn compute_mobile_header_hit_areas(_app: &AppState, area: Rect) -> MobileHeaderHitAreas {
     if area.width == 0 || area.height == 0 {
         return MobileHeaderHitAreas::default();
     }
 
-    let width = SWITCH_BUTTON_WIDTH.min(area.width);
+    let preferred_width = if area.width <= 20 {
+        4
+    } else {
+        SWITCH_BUTTON_WIDTH
+    };
+    let width = preferred_width.min(area.width);
     let switch = Rect::new(
         area.x + area.width.saturating_sub(width),
         area.y,
@@ -390,8 +403,9 @@ fn render_switch_button(app: &AppState, frame: &mut Frame, area: Rect) {
             .set_style(Style::default().fg(p.surface_dim).bg(p.surface0));
     }
     let label_y = if area.height > 1 { area.y + 1 } else { area.y };
+    let label = if area.width < 7 { "≡" } else { "switch" };
     frame.render_widget(
-        Paragraph::new("switch")
+        Paragraph::new(label)
             .style(
                 Style::default()
                     .fg(p.text)

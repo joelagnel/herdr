@@ -2778,6 +2778,9 @@ impl AppState {
                 observed_at,
             } => self
                 .update_terminal_state(pane_id, |terminal| {
+                    if terminal.detected_agent != agent {
+                        terminal.agent_via_ssh = false;
+                    }
                     Some(terminal.set_detected_state_with_screen_signals_at(
                         agent,
                         state,
@@ -2785,6 +2788,25 @@ impl AppState {
                         false,
                         visible_working,
                         process_exited,
+                        observed_at,
+                    ))
+                })
+                .into_iter()
+                .collect(),
+            AppEvent::SshAgentDetected {
+                pane_id,
+                agent,
+                observed_at,
+            } => self
+                .update_terminal_state(pane_id, |terminal| {
+                    terminal.agent_via_ssh = true;
+                    Some(terminal.set_detected_state_with_screen_signals_at(
+                        Some(agent),
+                        AgentState::Idle,
+                        false,
+                        false,
+                        false,
+                        false,
                         observed_at,
                     ))
                 })

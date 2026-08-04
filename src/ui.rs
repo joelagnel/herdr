@@ -32,9 +32,9 @@ use self::menus::{
     render_navigate_overlay, render_prefix_overlay, render_resize_overlay,
 };
 use self::mobile::{
-    compute_mobile_header_hit_areas, is_mobile_width, mobile_switcher_max_scroll_for_height,
+    compute_mobile_header_hit_areas, mobile_switcher_max_scroll_for_height,
     mobile_toast_banner_rect, render_mobile_header, render_mobile_panel,
-    render_mobile_toast_banner,
+    render_mobile_toast_banner, should_use_mobile_layout,
 };
 use self::navigator::render_navigator_overlay;
 pub(crate) use self::onboarding::onboarding_welcome_continue_rect;
@@ -219,11 +219,6 @@ fn compute_view_internal(
     resize_panes: bool,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
-    if is_mobile_width(area, app.mobile_width_threshold) {
-        compute_mobile_view(app, terminal_runtimes, area, resize_panes, cell_size);
-        return;
-    }
-
     let sidebar_w = if app.sidebar_collapsed {
         match app.sidebar_collapsed_mode {
             crate::config::SidebarCollapsedModeConfig::Compact => COLLAPSED_WIDTH,
@@ -233,6 +228,11 @@ fn compute_view_internal(
         app.sidebar_width
             .clamp(app.sidebar_min_width, app.sidebar_max_width)
     };
+
+    if should_use_mobile_layout(area, app.mobile_width_threshold, sidebar_w) {
+        compute_mobile_view(app, terminal_runtimes, area, resize_panes, cell_size);
+        return;
+    }
 
     let [sidebar_area, main_area] =
         Layout::horizontal([Constraint::Length(sidebar_w), Constraint::Min(1)]).areas(area);
@@ -812,6 +812,60 @@ mod tests {
     }
 
     #[test]
+    fn mobile_round_trip_restores_named_wide_sidebar() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("wide-space")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+
+        compute_view(&mut app, Rect::new(0, 0, 283, 57));
+        assert_eq!(app.view.layout, ViewLayout::Desktop);
+        assert_eq!(app.view.sidebar_rect.width, 26);
+
+        compute_view(&mut app, Rect::new(0, 0, 44, 30));
+        assert_eq!(app.view.layout, ViewLayout::Mobile);
+        assert_eq!(app.view.mobile_header_rect, Rect::new(0, 0, 44, 2));
+        assert_eq!(app.view.sidebar_rect, Rect::default());
+
+        compute_view(&mut app, Rect::new(0, 0, 283, 57));
+        assert_eq!(app.view.layout, ViewLayout::Desktop);
+        assert!(!app.sidebar_collapsed);
+        assert_eq!(app.view.sidebar_rect.width, 26);
+
+        let area = Rect::new(0, 0, 283, 57);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(&app, frame)).unwrap();
+        let screen = (0..area.height)
+            .map(|row| buffer_row_text(terminal.backend().buffer(), area, row))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(screen.contains("spaces"), "{screen}");
+        assert!(screen.contains("wide-space"), "{screen}");
+        assert!(screen.contains("agents"), "{screen}");
+    }
+
+    #[test]
+    fn desktop_sidebar_that_squeezes_terminal_uses_mobile_layout() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+
+        compute_view(&mut app, Rect::new(0, 0, 65, 20));
+        assert_eq!(app.view.layout, ViewLayout::Mobile);
+        assert_eq!(app.view.mobile_header_rect, Rect::new(0, 0, 65, 2));
+        assert_eq!(app.view.terminal_area, Rect::new(0, 2, 65, 18));
+
+        app.sidebar_collapsed = true;
+        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        compute_view(&mut app, Rect::new(0, 0, 65, 20));
+        assert_eq!(app.view.layout, ViewLayout::Desktop);
+    }
+
+    #[test]
     fn desktop_tab_bar_position_controls_geometry_and_mode_bar_placement() {
         let mut app = crate::app::state::AppState::test_new();
         app.workspaces = vec![Workspace::test_new("one")];
@@ -1212,7 +1266,7 @@ mod tests {
         app.tab_scroll_follow_active = false;
         app.tab_scroll = 2;
 
-        compute_view(&mut app, Rect::new(0, 0, 65, 20));
+        compute_view(&mut app, Rect::new(0, 0, 80, 20));
 
         assert!(app.view.tab_scroll_left_hit_area.width > 0);
         assert!(app.view.tab_scroll_right_hit_area.width > 0);
@@ -1257,7 +1311,7 @@ mod tests {
         app.tab_scroll_follow_active = false;
         app.tab_scroll = usize::MAX;
 
-        compute_view(&mut app, Rect::new(0, 0, 65, 20));
+        compute_view(&mut app, Rect::new(0, 0, 80, 20));
 
         let last_idx = app.workspaces[0].tabs.len() - 1;
         assert!(app.view.tab_hit_areas[last_idx].width > 0);

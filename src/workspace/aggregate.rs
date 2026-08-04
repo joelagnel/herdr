@@ -47,6 +47,11 @@ impl Tab {
                 let agent_label = terminal
                     .effective_display_agent()
                     .unwrap_or_else(|| fallback_agent_label.clone());
+                let agent_label = if terminal.agent_via_ssh {
+                    format!("{agent_label} (ssh)")
+                } else {
+                    agent_label
+                };
                 let presentation = terminal.effective_presentation();
                 Some(PaneDetail {
                     pane_id: *id,
@@ -213,6 +218,23 @@ mod tests {
             labels,
             vec![("planner".into(), "planner".into(), Some(Agent::Pi))]
         );
+    }
+
+    #[test]
+    fn pane_details_suffix_ssh_without_changing_agent_kind() {
+        let ws = Workspace::test_new("test");
+        let root_pane = ws.tabs[0].root_pane;
+        let mut terminals = HashMap::new();
+        let mut terminal = terminal_for_pane(&ws, root_pane);
+        terminal.set_detected_state(Some(Agent::Codex), AgentState::Working);
+        terminal.set_agent_name("planner".into());
+        terminal.agent_via_ssh = true;
+        terminals.insert(terminal.id.clone(), terminal);
+
+        let detail = ws.pane_details(&terminals).remove(0);
+        assert_eq!(detail.agent_label, "planner (ssh)");
+        assert_eq!(detail.agent_kind_label.as_deref(), Some("codex"));
+        assert_eq!(detail.agent, Some(Agent::Codex));
     }
 
     #[test]

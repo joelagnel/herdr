@@ -3649,12 +3649,14 @@ mod tests {
         ws.tabs[0].set_custom_name("very-long-one".into());
         ws.test_add_tab(Some("very-long-two"));
         ws.test_add_tab(Some("very-long-three"));
+        ws.test_add_tab(Some("very-long-four"));
+        ws.test_add_tab(Some("very-long-five"));
         app.state.workspaces = vec![ws];
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
 
-        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 65, 20));
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 80, 20));
         assert!(app.state.view.tab_scroll_right_hit_area.width > 0);
         let tab_bar = app.state.view.tab_bar_rect;
 

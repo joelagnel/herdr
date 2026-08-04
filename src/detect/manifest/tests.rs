@@ -100,6 +100,51 @@ fn known_agent_no_match_defaults_to_idle_fallback() {
 }
 
 #[test]
+fn bundled_ssh_identity_rules_recognize_captured_claude_and_codex_chrome() {
+    let claude = identify_with_osc(DetectionInput {
+        screen: "Claude Code v2.1.220\n\n❯ Try \"write a test for <filepath>\"\n⏵⏵ auto mode on",
+        osc_title: "✳ Claude Code",
+        osc_progress: "",
+    });
+    assert_eq!(claude, Some(Agent::Claude));
+
+    let codex = identify_with_osc(DetectionInput {
+        screen: ">_ OpenAI Codex (v0.146.0)\n\n› Run /review on my current changes\n\ngpt-5.6-sol max · ~",
+        osc_title: "joel",
+        osc_progress: "",
+    });
+    assert_eq!(codex, Some(Agent::Codex));
+
+    let codex_default = identify_with_osc(DetectionInput {
+        screen: ">_ OpenAI Codex (v0.146.0)\n\n› Run /review on my current changes\n\ngpt-5.6-sol default · ~/repo/herdr",
+        osc_title: "herdr",
+        osc_progress: "",
+    });
+    assert_eq!(codex_default, Some(Agent::Codex));
+}
+
+#[test]
+fn ssh_identity_rules_reject_individual_incidental_fragments() {
+    for screen in [
+        ">_ OpenAI Codex (v0.146.0)",
+        "› Run /review on my current changes",
+        "gpt-5.6-sol max · ~",
+        "Claude Code v2.1.220",
+        "ordinary remote shell output",
+    ] {
+        assert_eq!(
+            identify_with_osc(DetectionInput {
+                screen,
+                osc_title: "joel",
+                osc_progress: "",
+            }),
+            None,
+            "unexpected identity for {screen:?}"
+        );
+    }
+}
+
+#[test]
 fn rule_semantics_apply_gates_priority_and_line_regex() {
     with_manifest_dirs("rule-semantics", || {
         write_local_codex(&rules_manifest(
