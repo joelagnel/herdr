@@ -77,6 +77,10 @@ const PROCESS_RUNTIME_MARKER_CACHE_CAPACITY: usize = 1_024;
 const PROCESS_RUNTIME_MARKER_CACHE_RETENTION: Duration = Duration::from_secs(60);
 const PROCESS_RUNTIME_MARKER_NEGATIVE_TTL: Duration = Duration::from_secs(1);
 
+pub(crate) fn process_tcp_connections(_pid: u32) -> Vec<super::ProcessTcpConnection> {
+    Vec::new()
+}
+
 static NEXT_PANE_RUNTIME_MARKER: AtomicU64 = AtomicU64::new(1);
 static PROCESS_RUNTIME_MARKER_CACHE: LazyLock<Mutex<HashMap<u32, CachedProcessRuntimeMarker>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));

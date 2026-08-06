@@ -33,9 +33,9 @@ herdr server stop
 
 ### Run a remote agent from a local pane
 
-You can also keep Herdr local, run `ssh` inside one of its panes, and start Claude Code or Codex in that remote shell. Herdr recognizes the remote harness from its live terminal chrome, tracks its state, and marks its agent label with `(ssh)`.
+You can also keep Herdr local, run `ssh` inside one of its panes, and start Claude Code or Codex in that remote shell. On Linux, Herdr opens a short non-interactive SSH probe and inspects the foreground process and TTY associated with the exact SSH connection. It uses terminal chrome only as a fallback when that process probe is unavailable, tracks the agent's state, and marks its label with `(ssh)`.
 
-This is different from `herdr --remote`: the Herdr server and pane stay local, while only the shell and agent behind `ssh` are remote. Detection is intentionally conservative and currently covers Claude Code and Codex.
+This is different from `herdr --remote`: the Herdr server and pane stay local, while only the shell and agent behind `ssh` are remote. Detection is intentionally conservative and currently covers Claude Code and Codex. The process probe requires a direct OpenSSH target that can authenticate non-interactively; jump-host, multiplexed, or otherwise ambiguous connections fall back to visible-screen matching.
 
 ## Remote work through normal SSH
 

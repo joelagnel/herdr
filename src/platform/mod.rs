@@ -18,6 +18,14 @@ pub struct ForegroundJob {
     pub processes: Vec<ForegroundProcess>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProcessTcpConnection {
+    pub(crate) local_address: std::net::IpAddr,
+    pub(crate) local_port: u16,
+    pub(crate) remote_address: std::net::IpAddr,
+    pub(crate) remote_port: u16,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Signal {
     Hangup,

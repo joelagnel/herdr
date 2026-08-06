@@ -9,7 +9,7 @@ use std::{
 
 use super::{
     read_limited_reader, ClipboardCommand, ClipboardImage, ForegroundJob, ForegroundProcess,
-    LimitedRead, Signal,
+    LimitedRead, ProcessTcpConnection, Signal,
 };
 
 const WSL_MARKER_ENV_VARS: &[&str] = &["WSL_DISTRO_NAME", "WSL_INTEROP"];
@@ -363,6 +363,90 @@ fn process_argv(pid: u32) -> Option<Vec<String>> {
         .map(|part| String::from_utf8_lossy(part).into_owned())
         .collect();
     (!parts.is_empty()).then_some(parts)
+}
+
+pub(crate) fn process_tcp_connections(pid: u32) -> Vec<ProcessTcpConnection> {
+    if pid == 0 {
+        return Vec::new();
+    }
+    let socket_inodes = std::fs::read_dir(format!("/proc/{pid}/fd"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| std::fs::read_link(entry.path()).ok())
+        .filter_map(|target| {
+            let target = target.to_string_lossy();
+            target
+                .strip_prefix("socket:[")
+                .and_then(|value| value.strip_suffix(']'))
+                .and_then(|value| value.parse::<u64>().ok())
+        })
+        .collect::<HashSet<_>>();
+    if socket_inodes.is_empty() {
+        return Vec::new();
+    }
+
+    let mut connections = Vec::new();
+    for (path, ipv6) in [
+        (format!("/proc/{pid}/net/tcp"), false),
+        (format!("/proc/{pid}/net/tcp6"), true),
+    ] {
+        let Ok(table) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        connections.extend(parse_proc_net_tcp_connections(&table, ipv6, &socket_inodes));
+    }
+    connections
+}
+
+fn parse_proc_net_tcp_connections(
+    table: &str,
+    ipv6: bool,
+    socket_inodes: &HashSet<u64>,
+) -> Vec<ProcessTcpConnection> {
+    table
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            if fields.get(3).copied() != Some("01") {
+                return None;
+            }
+            let inode = fields.get(9)?.parse::<u64>().ok()?;
+            if !socket_inodes.contains(&inode) {
+                return None;
+            }
+            let (local_address, local_port) = parse_proc_net_tcp_endpoint(fields.get(1)?, ipv6)?;
+            let (remote_address, remote_port) = parse_proc_net_tcp_endpoint(fields.get(2)?, ipv6)?;
+            Some(ProcessTcpConnection {
+                local_address,
+                local_port,
+                remote_address,
+                remote_port,
+            })
+        })
+        .collect()
+}
+
+fn parse_proc_net_tcp_endpoint(value: &str, ipv6: bool) -> Option<(std::net::IpAddr, u16)> {
+    let (address, port) = value.split_once(':')?;
+    let port = u16::from_str_radix(port, 16).ok()?;
+    let address = if ipv6 {
+        if address.len() != 32 {
+            return None;
+        }
+        let mut bytes = [0_u8; 16];
+        for (index, chunk) in address.as_bytes().chunks_exact(8).enumerate() {
+            let chunk = std::str::from_utf8(chunk).ok()?;
+            let word = u32::from_str_radix(chunk, 16).ok()?;
+            bytes[index * 4..index * 4 + 4].copy_from_slice(&word.to_le_bytes());
+        }
+        std::net::IpAddr::V6(std::net::Ipv6Addr::from(bytes))
+    } else {
+        let word = u32::from_str_radix(address, 16).ok()?;
+        std::net::IpAddr::V4(std::net::Ipv4Addr::from(word.to_le_bytes()))
+    };
+    Some((address, port))
 }
 
 /// Get the current working directory of a process.
@@ -986,6 +1070,45 @@ mod tests {
         assert_eq!(
             process_pgrp_and_comm_from_stat("123 (name with ) paren) S 1 456 789 0 456"),
             Some((456, "name with ) paren".to_string()))
+        );
+    }
+
+    #[test]
+    fn proc_tcp_parser_maps_an_owned_established_socket() {
+        let table = r#"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+ 449: F200A8C0:97C0 D500A8C0:0016 01 00000000:00000000 02:000A077A 00000000  1000        0 375803358
+ 450: 0100007F:1234 0100007F:5678 0A 00000000:00000000 00:00000000 00000000  1000        0 999999999
+"#;
+        let connections =
+            parse_proc_net_tcp_connections(table, false, &HashSet::from([375_803_358_u64]));
+
+        assert_eq!(
+            connections,
+            vec![ProcessTcpConnection {
+                local_address: "192.168.0.242".parse().unwrap(),
+                local_port: 38_848,
+                remote_address: "192.168.0.213".parse().unwrap(),
+                remote_port: 22,
+            }]
+        );
+    }
+
+    #[test]
+    fn proc_tcp6_parser_decodes_linux_word_endianness() {
+        let table = r#"  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+  17: 00000000000000000000000001000000:C350 0000000000000000FFFF0000D500A8C0:0016 01 00000000:00000000 02:00000000 00000000  1000        0 375803359
+"#;
+        let connections =
+            parse_proc_net_tcp_connections(table, true, &HashSet::from([375_803_359_u64]));
+
+        assert_eq!(
+            connections,
+            vec![ProcessTcpConnection {
+                local_address: "::1".parse().unwrap(),
+                local_port: 50_000,
+                remote_address: "::ffff:192.168.0.213".parse().unwrap(),
+                remote_port: 22,
+            }]
         );
     }
 

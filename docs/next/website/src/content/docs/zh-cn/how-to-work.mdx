@@ -33,9 +33,9 @@ herdr server stop
 
 ### 从本地窗格运行远程智能体
 
-你也可以让 Herdr 保持在本地,在其中一个窗格里运行 `ssh`,再在远程 shell 中启动 Claude Code 或 Codex。Herdr 会从实时终端界面识别远程工具、跟踪其状态,并在智能体标签后加上 `(ssh)`。
+你也可以让 Herdr 保持在本地,在其中一个窗格里运行 `ssh`,再在远程 shell 中启动 Claude Code 或 Codex。在 Linux 上,Herdr 会打开一个短暂的非交互式 SSH 探测连接,检查与原 SSH 连接精确对应的前台进程和 TTY。只有在无法使用进程探测时才回退到终端界面识别,同时跟踪智能体状态,并在标签后加上 `(ssh)`。
 
-这不同于 `herdr --remote`:Herdr 服务器和窗格仍在本地,只有 `ssh` 后面的 shell 和智能体在远程。为避免误报,检测会保持谨慎,目前支持 Claude Code 和 Codex。
+这不同于 `herdr --remote`:Herdr 服务器和窗格仍在本地,只有 `ssh` 后面的 shell 和智能体在远程。为避免误报,检测会保持谨慎,目前支持 Claude Code 和 Codex。进程探测要求直接的 OpenSSH 目标能以非交互方式完成认证;使用跳板主机、连接复用或存在其他歧义时,会安全地回退到可见屏幕匹配。
 
 ## 通过普通 SSH 的远程工作
 

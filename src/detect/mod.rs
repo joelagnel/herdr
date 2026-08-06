@@ -5,6 +5,9 @@
 
 pub mod manifest;
 pub mod manifest_update;
+mod ssh;
+
+pub(crate) use ssh::{probe_remote_agent, RemoteAgentProbe};
 
 /// The detected state of a terminal pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

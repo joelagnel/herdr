@@ -19,6 +19,10 @@ pub(crate) fn should_draw_host_cursor_by_default() -> bool {
     false
 }
 
+pub(crate) fn process_tcp_connections(_pid: u32) -> Vec<super::ProcessTcpConnection> {
+    Vec::new()
+}
+
 fn raw_command_argv(command: &str, flag: &str) -> Vec<std::ffi::OsString> {
     vec!["/bin/sh".into(), flag.into(), command.into()]
 }

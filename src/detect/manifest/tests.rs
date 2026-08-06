@@ -219,6 +219,27 @@ fn remote_manifest_loads_between_local_override_and_bundled() {
 }
 
 #[test]
+fn newer_remote_state_manifest_preserves_bundled_ssh_identity_rules() {
+    with_manifest_dirs("remote-preserves-ssh-identity", || {
+        write_remote_codex(&remote_manifest("9999.01.01.1", "blocked", "remote-ready"));
+
+        let remote_state = explain(Agent::Codex, "remote-ready");
+        assert_eq!(remote_state.state, AgentState::Blocked);
+        assert!(matches!(
+            remote_state.source,
+            Some(ManifestSource::Remote { .. })
+        ));
+
+        let remote_identity = identify_with_osc(DetectionInput {
+            screen: ">_ OpenAI Codex (v0.146.0)\n\n› Run /review on my current changes\n\ngpt-5.6-sol max · ~",
+            osc_title: "joel",
+            osc_progress: "",
+        });
+        assert_eq!(remote_identity, Some(Agent::Codex));
+    });
+}
+
+#[test]
 fn fallback_explain_preserves_active_manifest_version() {
     with_manifest_dirs("fallback-version", || {
         write_remote_codex(&remote_manifest("9999.01.01.1", "blocked", "remote-ready"));

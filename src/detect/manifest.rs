@@ -764,7 +764,10 @@ fn read_remote_manifest(agent: Agent, bundled: &AgentManifest) -> Option<LoadedM
         .and_then(|content| {
             parse_remote_manifest_for_agent(agent, &content).map(|parsed| parsed.manifest)
         }) {
-        Ok(manifest) => {
+        Ok(mut manifest) => {
+            if manifest.identity_rules.is_empty() {
+                manifest.identity_rules.clone_from(&bundled.identity_rules);
+            }
             let version = manifest
                 .version
                 .as_ref()
